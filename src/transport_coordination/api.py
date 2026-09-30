@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .errors import DomainError, ValidationError
+from .corridor import CorridorOrchestrator
 from .service import DomainService
 from .storage import Database
 
@@ -21,6 +22,7 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
     body = body or {}
     parsed = urlparse(path)
     actor_id = headers.get("X-Actor-Id", "")
+    orchestrator = CorridorOrchestrator(service.database, service.clock)
     try:
         if method == "GET" and parsed.path == "/health":
             valid, count = service.verify_audit()
@@ -48,6 +50,62 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
             query = parse_qs(parsed.query)
             after = int(query.get("after_sequence", ["0"])[0])
             return 200, {"items": service.audit_events(after)}
+
+        # --------------------------------------------- 国际通道韧性编排接口
+        if method == "POST" and parsed.path == "/corridor/references":
+            receipt = orchestrator.publish_reference(actor_id=actor_id, **body)
+            return 200 if receipt.get("replayed") else 201, receipt
+        if method == "POST" and parsed.path == "/corridor/notices":
+            receipt = orchestrator.publish_notice(actor_id=actor_id, **body)
+            return 200 if receipt.get("replayed") else 201, receipt
+        if method == "POST" and parsed.path == "/corridor/notices/recover":
+            receipt = orchestrator.recover_notice(actor_id=actor_id, **body)
+            return 200, receipt
+        if method == "POST" and parsed.path == "/corridor/shipments":
+            receipt = orchestrator.register_shipment(actor_id=actor_id, **body)
+            return 200 if receipt.get("replayed") else 201, receipt
+        if method == "POST" and parsed.path == "/corridor/deadlines":
+            receipt = orchestrator.revise_deadline(actor_id=actor_id, **body)
+            return 200 if receipt.get("replayed") else 201, receipt
+        if method == "POST" and parsed.path == "/corridor/baselines":
+            receipt = orchestrator.set_baseline(actor_id=actor_id, **body)
+            return 200 if receipt.get("replayed") else 201, receipt
+        if method == "POST" and parsed.path == "/corridor/evaluations":
+            return 200, orchestrator.evaluate_disruption(actor_id=actor_id, **body)
+        if method == "POST" and parsed.path == "/corridor/plans/select":
+            receipt = orchestrator.select_plan(actor_id=actor_id, **body)
+            return 200 if receipt.get("replayed") else 201, receipt
+        if method == "POST" and parsed.path == "/corridor/plans/approve":
+            receipt = orchestrator.approve_plan(actor_id=actor_id, **body)
+            return 200 if receipt.get("replayed") else 201, receipt
+        if method == "POST" and parsed.path == "/corridor/plans/switch":
+            receipt = orchestrator.execute_switch(actor_id=actor_id, **body)
+            return 200, receipt
+        if method == "POST" and parsed.path == "/corridor/checkpoints":
+            receipt = orchestrator.record_checkpoint(actor_id=actor_id, **body)
+            return 200 if receipt.get("replayed") else 201, receipt
+        if method == "GET" and parsed.path == "/corridor/plans":
+            query = parse_qs(parsed.query)
+            return 200, orchestrator.list_plans(
+                actor_id=actor_id,
+                shipment_id=query.get("shipment_id", [None])[0],
+                evaluation_id=query.get("evaluation_id", [None])[0])
+        if method == "GET" and parsed.path == "/corridor/ops-view":
+            query = parse_qs(parsed.query)
+            return 200, orchestrator.ops_view(
+                actor_id=actor_id, shipment_id=query.get("shipment_id", [None])[0],
+                as_of=query.get("as_of", [None])[0])
+        if method == "GET" and parsed.path == "/corridor/finance-view":
+            query = parse_qs(parsed.query)
+            return 200, orchestrator.finance_view(
+                actor_id=actor_id, shipment_id=query.get("shipment_id", [None])[0],
+                as_of=query.get("as_of", [None])[0])
+        if method == "GET" and parsed.path == "/corridor/history":
+            query = parse_qs(parsed.query)
+            at = query.get("at", [""])[0]
+            if not at:
+                raise ValidationError("at 不能为空")
+            return 200, orchestrator.history_snapshot(actor_id=actor_id, at=at)
         return 404, {"error": "route_not_found", "message": "接口不存在"}
     except DomainError as exc:
         return exc.status, {"error": exc.code, "message": str(exc)}
