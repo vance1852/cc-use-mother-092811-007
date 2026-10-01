@@ -1,5 +1,6 @@
-"""技能赛训协作基础服务的服务端基础包。"""
+"""国际通道韧性编排基础服务的服务端包。"""
 
+from .orchestration import OrchestrationService
 from .service import DomainService
 
-__all__ = ["DomainService"]
+__all__ = ["DomainService", "OrchestrationService"]

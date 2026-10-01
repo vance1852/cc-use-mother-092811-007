@@ -33,3 +33,17 @@ class ConflictError(DomainError):
 
     code = "conflict"
     status = 409
+
+
+class LockFailed(DomainError):
+    """全分段锁定未能完成，调用方应放弃该方案。"""
+
+    code = "lock_failed"
+    status = 409
+
+
+class ApprovalRequired(DomainError):
+    """方案尚缺少必要审批，不能切换。"""
+
+    code = "approval_required"
+    status = 409
